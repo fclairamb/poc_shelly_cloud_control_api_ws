@@ -1,5 +1,7 @@
 # POC: Shelly Cloud Control API - WebSocket API
 
+Forked from [corenting/poc_shelly_cloud_control_api_ws](https://github.com/corenting/poc_shelly_cloud_control_api_ws).
+
 A quick & small POC in Python on how to use the [Shelly Cloud Control API](https://shelly-api-docs.shelly.cloud/cloud-control-api/real-time-events#websocket-api) (and more specifically the WebSocket API) to get data from a Shelly device (tested with a Shelly Plug S).
 
 The aim is to get realtime data (temperature, power in watts) from the device directly from the Shelly Cloud, like [the official Shelly Home website](https://home.shelly.cloud/#/login), which seems to use the same API to display realtime data.
@@ -12,9 +14,8 @@ It doesn't have any error management, access token expiration handling, security
 Once the setup is done, the `poc.py` file will try to get OAuth credentials and fetch events through the WebSocket API. As it doesn't handle OAuth session management it will probably crash once the access token expires.
 
 You need to:
-1. In your Python environments, install the dependencies listed in `requirements.txt` (`pip install -r requirements.txt`)
-2. Set two environment variables that will be used for the OAuth login:
-    -  `SHELLY_EMAIL` with the email you use on your Shelly Cloud account
-    - `SHELLY_PASSWORD_SHA1` with the sha1 of your Shelly Cloud account password (can be obtained with `echo -n "my_password" | sha1sum` for example).
-3. Change the `SERVER` variable with the server used for your account. You can obtain it by looking at the network requests done on the official Shelly Home Website. It should be something like `shelly-49-eu.shelly.cloud`.
-4. You can then launch the script
+1. In your Python environments, install the dependencies: `pipenv install`
+2. Run it:
+```bash
+pipenv run python3 poc.py -u <your_shelly_cloud_email> -p <your_shelly_cloud_password> -s <your_shelly_server>
+```
