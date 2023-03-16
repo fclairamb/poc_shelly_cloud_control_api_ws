@@ -1,17 +1,31 @@
+import argparse
 import asyncio
 from datetime import datetime
+import os
 import requests
 import websockets
 import json
 import sqlite3
-import os
+import logging
 from datetime import timezone
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 
-EMAIL = os.environ["SHELLY_EMAIL"]
-PASSWORD_SHA1 = os.environ["SHELLY_PASSWORD_SHA1"]
-SERVER = "shelly-49-eu.shelly.cloud"
-SQLITE_DATABASE = "shelly_plug.db"
+parser = argparse.ArgumentParser(description='Shelly Plug POC')
+parser.add_argument('--email', '-e', help='Shelly email',
+                    required=True)
+parser.add_argument('--password', '-p', help='Shelly password',
+                    required=True)
+parser.add_argument('--server', '-s', help='Shelly server',
+                    default='shelly-62-eu.shelly.cloud')
+parser.add_argument('--database', '-d', help='SQLite database',
+                    default='shelly_plug.db')
+args = parser.parse_args()
+
+EMAIL: str = args.email
+PASSWORD_SHA1: str = args.password
+SERVER: str = args.server
+SQLITE_DATABASE: str = args.database
 
 
 def _get_authorization_code():
@@ -34,7 +48,7 @@ def _get_authorization_code():
     return res.json()["data"]["code"]
 
 
-def login():
+def get_access_token() -> str:
     """Login on the API."""
     res = requests.post(
         f"https://{SERVER}/oauth/auth",
@@ -46,80 +60,55 @@ def login():
     )
 
     # TODO: add error management
-    return res.json()
-
-
-def create_table(database_cursor):
-    database_cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS logs(
-            timestamp_utc INTEGER  NOT NULL PRIMARY KEY,
-            power FLOAT  NOT NULL,
-            overpower BOOL  NOT NULL,
-            temperature FLOAT  NOT NULL,
-            over_temperature BOOL  NOT NULL
-        )
-    """
-    )
+    return res.json().get("access_token")
 
 
 async def main():
-    # TODO: add token renewal
-    print("Login...")
-    oauth_informations = login()
-    access_token = oauth_informations["access_token"]
-    websocket_url = f"wss://{SERVER}:6113/shelly/wss/hk_sock?t={access_token}"
-
-    print("Opening local database...")
+    logging.info("Opening local database...")
     database_connection = sqlite3.connect(SQLITE_DATABASE)
     database_cursor = database_connection.cursor()
+
+    logging.info("Login...")
+
 
     # Create table
     database_cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS logs(
-            timestamp_utc INTEGER  NOT NULL PRIMARY KEY,
-            power FLOAT  NOT NULL,
-            overpower BOOL  NOT NULL,
-            temperature FLOAT  NOT NULL,
-            over_temperature BOOL  NOT NULL
+            id INTEGER  NOT NULL PRIMARY KEY AUTOINCREMENT,
+            date datetimetz  NOT NULL,
+            content jsonb  NOT NULL
         )
-    """
+        """
     )
     database_connection.commit()
 
-    print("Connecting to websocket")
-    async for websocket in websockets.connect(websocket_url):
-        print("Connected")
+    logging.info("Connecting to websocket")
+    access_token = get_access_token()
+    async for websocket in websockets.connect(f"wss://{SERVER}:6113/shelly/wss/hk_sock?t={access_token}"):
+        logging.info("Connected")
         try:
             async for message in websocket:
-                print(f"Processing message received at {datetime.now(timezone.utc)}")
+                now = datetime.now(timezone.utc)
                 parsed_message = json.loads(message)
-                power = parsed_message["status"]["meters"][0]["power"]
-                timestamp = parsed_message["status"]["meters"][0]["timestamp"]
-                overpower = parsed_message["status"]["meters"][0]["overpower"]
-                temperature = parsed_message["status"]["temperature"]
-                over_temperature = parsed_message["status"]["overtemperature"]
+                logging.info("Processing message received at %s: %s", now, json.dumps(parsed_message, indent=2))
+
+                if 'status' in parsed_message and 'serial' in parsed_message['status']:
+                    event_time = datetime.fromtimestamp(
+                        parsed_message["status"]["serial"], timezone.utc)
+                    if event_time < now:
+                        logging.info("Event time: %s (%s ago)", event_time, now-event_time)
 
                 # Insert in database
                 database_cursor.execute(
-                    """
-                    INSERT INTO logs(
-                        timestamp_utc,
-                        power,
-                        overpower,
-                        temperature,
-                        over_temperature
-                    )
-                    VALUES(?, ?, ?, ?, ?)
-                """,
-                    (timestamp, power, overpower, temperature, over_temperature),
+                    "INSERT INTO logs( date, content ) VALUES( ?, ? )",
+                    (now, message,),
                 )
                 database_connection.commit()
 
         except websockets.ConnectionClosed as err:
-            print(f"Error on websocket: {err}, reconnecting...")
-            continue
+            logging.warning(f"Error on websocket: {err}, reconnecting...")
+            access_token = get_access_token()
 
 
 if __name__ == "__main__":
